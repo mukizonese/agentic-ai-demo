@@ -321,3 +321,29 @@ If you encounter any issues or have questions:
 2. Review the logs: `make logs`
 3. Create an issue on GitHub
 4. Check agent status: `make health-check`
+
+## Python Backend Setup (MCP Server)
+
+1. **Install all dependencies and set up virtual environment (recommended):**
+
+   ```sh
+   make install-deps
+   ```
+   This will automatically create a `.venv` Python virtual environment (if it doesn't exist), activate it, and install all backend and frontend dependencies.
+
+2. **Activate the virtual environment (if not already active):**
+
+   ```sh
+   source .venv/bin/activate
+   ```
+
+3. **Run the MCP server (from project root):**
+
+   ```sh
+   cd mcp-server
+   uvicorn main:app --reload --host 0.0.0.0 --port 8000
+   ```
+
+## Frontend Setup
+
+(Include or update frontend instructions as needed)

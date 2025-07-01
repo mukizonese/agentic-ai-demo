@@ -6,10 +6,9 @@ import logging
 class AgentOrchestrator:
     """Orchestrates agent responses and manages conversation flow"""
     
-    def __init__(self, support_agent, product_agent, knowledge_agent, llm_service):
+    def __init__(self, support_agent, product_agent, llm_service):
         self.support_agent = support_agent
         self.product_agent = product_agent
-        self.knowledge_agent = knowledge_agent
         self.llm_service = llm_service
         
         # Session storage for conversation context
@@ -47,7 +46,9 @@ class AgentOrchestrator:
         
         try:
             # Always try support agent for support-related queries
-            if intent == "support" or any(word in message.lower() for word in ["help", "issue", "problem", "support"]):
+            support_keywords = ["support", "help", "issue", "problem", "bug", "password", "reset", "login", "account"]
+            if intent == "support" or any(word in message.lower() for word in support_keywords):
+                # route to Support Agent
                 self.logger.info("Routing to Support Agent...")
                 support_response = await self.support_agent.process_query(message)
                 self.logger.info(f"Support Agent response: {support_response}")
@@ -60,7 +61,8 @@ class AgentOrchestrator:
                     })
             
             # Try product agent for product-related queries
-            if intent == "product_info" or any(word in message.lower() for word in ["product", "price", "buy", "feature"]):
+            product_keywords = ["product", "price", "buy", "feature"]
+            if intent == "product_info" or any(word in message.lower() for word in product_keywords):
                 self.logger.info("Routing to Product Agent...")
                 product_response = await self.product_agent.process_query(message)
                 self.logger.info(f"Product Agent response: {product_response}")
@@ -71,18 +73,6 @@ class AgentOrchestrator:
                         "processing_time": product_response["processing_time"],
                         "sources": product_response.get("sources", [])
                     })
-            
-            # Always try knowledge agent for additional context
-            self.logger.info("Routing to Knowledge Agent...")
-            knowledge_response = await self.knowledge_agent.process_query(message)
-            self.logger.info(f"Knowledge Agent response: {knowledge_response}")
-            if knowledge_response.get("handled") and knowledge_response.get("sources"):
-                agent_responses.append({
-                    "agent_name": knowledge_response["agent_name"],
-                    "response": knowledge_response["response"],
-                    "processing_time": knowledge_response["processing_time"],
-                    "sources": knowledge_response.get("sources", [])
-                })
             
             # If no agents handled the query, provide a general response
             if not agent_responses:

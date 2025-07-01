@@ -17,13 +17,19 @@ help:
 
 # Install dependencies
 install-deps:
-	@echo "Installing Python dependencies for backend services..."
-	cd support-app-api && pip install -r requirements.txt
-	cd product-app-api && pip install -r requirements.txt
-	cd mcp-server && pip install -r requirements.txt
-	@echo "Installing Node.js dependencies for frontend..."
-	cd frontend && npm install
-	@echo "Dependencies installed successfully!"
+	@echo "Setting up Python virtual environment..."
+	@if [ ! -d ".venv" ]; then \
+		python3.11 -m venv .venv; \
+		echo "Created .venv virtual environment."; \
+	fi
+	@. .venv/bin/activate && \
+	echo "Installing Python dependencies for backend services..." && \
+	cd support-app-api && pip install -r requirements.txt && \
+	cd ../product-app-api && pip install -r requirements.txt && \
+	cd ../mcp-server && pip install -r requirements.txt && \
+	echo "Installing Node.js dependencies for frontend..." && \
+	cd ../frontend && npm install && \
+	echo "Dependencies installed successfully!"
 
 # Build all Docker images for local development
 build-local:

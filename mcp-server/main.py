@@ -11,8 +11,8 @@ from services.llm_service import LLMService
 from services.vector_service import VectorService
 from agents.support_agent import SupportAppAgent
 from agents.product_agent import ProductAppAgent
-from agents.knowledge_agent import KnowledgeAgent
 from agents.orchestrator import AgentOrchestrator
+from services.vector_data_loader import initialize_vector_data
 
 # Global services
 llm_service = None
@@ -34,18 +34,16 @@ async def lifespan(app: FastAPI):
     # Initialize agents
     support_agent = SupportAppAgent(llm_service)
     product_agent = ProductAppAgent(llm_service)
-    knowledge_agent = KnowledgeAgent(llm_service, vector_service)
     
     # Initialize orchestrator
     orchestrator = AgentOrchestrator(
         support_agent=support_agent,
         product_agent=product_agent,
-        knowledge_agent=knowledge_agent,
         llm_service=llm_service
     )
     
     # Initialize vector database with sample data
-    await knowledge_agent.initialize_vector_data()
+    await initialize_vector_data(llm_service, vector_service)
     
     print("MCP Server initialized successfully!")
     yield
@@ -134,8 +132,7 @@ async def get_agents_status():
         "status": "active",
         "agents": {
             "support_agent": "active",
-            "product_agent": "active",
-            "knowledge_agent": "active"
+            "product_agent": "active"
         },
         "services": {
             "llm_service": "active",

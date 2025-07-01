@@ -5,6 +5,7 @@ import openai
 from typing import Dict, Any, Optional, List
 import json
 import logging
+from langchain.embeddings import HuggingFaceEmbeddings
 
 class LLMService:
     """Service for routing LLM requests to different backends"""
@@ -133,20 +134,19 @@ class LLMService:
                     raise Exception(f"HuggingFace API error: {response.status}")
     
     async def _generate_mock(self, prompt: str, max_tokens: int) -> Dict[str, Any]:
-        """Generate mock response when no LLM backend is available"""
-        self.logger.info("Returning mock response...")
-        # Simple mock response based on prompt content
-        if "support" in prompt.lower():
-            text = "I can help you with support-related questions. Please provide more details about your issue."
-        elif "product" in prompt.lower():
-            text = "I can provide information about our products. What specific product details are you looking for?"
-        else:
-            text = f"I understand you're asking: '{prompt[:100]}...' Let me help you with that."
-        
+        """Generate mock response using langchain embeddings"""
+        self.logger.info("Returning mock response with langchain embeddings...")
+        # Use HuggingFaceEmbeddings from langchain
+        try:
+            embedder = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+            embedding = embedder.embed_query(prompt)
+            text = f"[EMBEDDING GENERATED] Vector length: {len(embedding)}. This is a mock response."
+        except Exception as e:
+            text = f"[EMBEDDING ERROR] {str(e)}. This is a mock response."
         return {
             "text": text,
-            "backend": "mock",
-            "model": "mock-model",
+            "backend": "mock-langchain-embedding",
+            "model": "sentence-transformers/all-MiniLM-L6-v2",
             "success": True
         }
     
