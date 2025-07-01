@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+  # Ollama for production LLM inference
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    networks:
+      - agentic-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ChromaDB for local vector storage
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: chromadb
+    ports:
+      - "8000:8000"
+    volumes:
+      - chromadb_data:/chroma/chroma
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
+    networks:
+      - agentic-network
+
+  # Support App API
+  support-app-api:
+    build:
+      context: ../support-app-api
+      dockerfile: Dockerfile
+    container_name: support-app-api
+    ports:
+      - "8001:8001"
+    environment:
+      - PORT=8001
+      - ENVIRONMENT=production
+    networks:
+      - agentic-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Product App API
+  product-app-api:
+    build:
+      context: ../product-app-api
+      dockerfile: Dockerfile
+    container_name: product-app-api
+    ports:
+      - "8002:8002"
+    environment:
+      - PORT=8002
+      - ENVIRONMENT=production
+    networks:
+      - agentic-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MCP Server (Multi-Agent Orchestration)
+  mcp-server:
+    build:
+      context: ../mcp-server
+      dockerfile: Dockerfile
+    container_name: mcp-server
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./env/.env.prod
+    depends_on:
+      - ollama
+      - chromadb
+      - support-app-api
+      - product-app-api
+    networks:
+      - agentic-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Frontend React App
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile.prod
+    container_name: frontend
+    ports:
+      - "3000:80"
+    environment:
+      - REACT_APP_MCP_SERVER_URL=http://localhost:8000
+      - REACT_APP_ENVIRONMENT=production
+    depends_on:
+      - mcp-server
+    networks:
+      - agentic-network
+
+networks:
+  agentic-network:
+    driver: bridge
+
+volumes:
+  ollama_data:
+  chromadb_data: 

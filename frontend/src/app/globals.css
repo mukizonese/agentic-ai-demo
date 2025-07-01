@@ -1,0 +1,80 @@
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+@layer base {
+  html {
+    font-feature-settings: 'cv11', 'ss01';
+    font-variation-settings: 'opsz' 32;
+  }
+}
+
+@layer components {
+  .chat-message {
+    @apply px-4 py-3 rounded-lg max-w-3xl;
+  }
+  
+  .chat-message.user {
+    @apply bg-primary-600 text-white ml-auto;
+  }
+  
+  .chat-message.assistant {
+    @apply bg-white text-gray-900 mr-auto border border-gray-200;
+  }
+  
+  .chat-input {
+    @apply w-full px-4 py-3 text-gray-900 placeholder-gray-500 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none;
+  }
+  
+  .agent-badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  
+  .agent-badge.support {
+    @apply bg-green-100 text-green-800;
+  }
+  
+  .agent-badge.product {
+    @apply bg-blue-100 text-blue-800;
+  }
+  
+  .agent-badge.knowledge {
+    @apply bg-purple-100 text-purple-800;
+  }
+  
+  .agent-badge.general {
+    @apply bg-gray-100 text-gray-800;
+  }
+  
+  .loading-dots {
+    @apply inline-flex space-x-1;
+  }
+  
+  .loading-dots span {
+    @apply w-2 h-2 bg-current rounded-full animate-pulse;
+    animation-delay: calc(var(--delay) * 0.2s);
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: #f1f5f9;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+}
