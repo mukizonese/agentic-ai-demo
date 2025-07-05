@@ -1,10 +1,41 @@
 import asyncio
 import time
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, TypedDict, Annotated
 import logging
+from langgraph.graph import StateGraph, END
+from langgraph.graph.message import add_messages
+from langgraph.checkpoint.memory import MemorySaver
+import aiohttp
+from dataclasses import dataclass
 
-class AgentOrchestrator:
-    """Orchestrates agent responses and manages conversation flow"""
+@dataclass
+class AgentResponse:
+    """Structured response from agents"""
+    agent_name: str
+    response: str
+    handled: bool
+    processing_time: float
+    sources: List[str]
+    error: Optional[str] = None
+
+# Define the state structure for LangGraph
+class AgentState(TypedDict):
+    """State structure for the agent orchestration graph"""
+    messages: Annotated[List[Dict[str, Any]], add_messages]
+    user_message: str
+    user_id: str
+    session_id: str
+    intent: Optional[str]
+    intent_confidence: Optional[float]
+    entities: List[str]
+    agent_responses: List[AgentResponse]
+    current_agent: Optional[str]
+    error: Optional[str]
+    retry_count: int
+    processing_start_time: float
+
+class LangGraphOrchestrator:
+    """LangGraph-based orchestrator for agent responses and conversation flow"""
     
     def __init__(self, support_agent, product_agent, llm_service):
         self.support_agent = support_agent
@@ -14,11 +45,286 @@ class AgentOrchestrator:
         # Session storage for conversation context
         self.sessions = {}
         
+        # Initialize logging
         logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger("AgentOrchestrator")
+        self.logger = logging.getLogger("LangGraphOrchestrator")
         
+        # Initialize checkpoint memory for state persistence
+        self.memory = MemorySaver()
+        
+        # Build the LangGraph workflow
+        self.workflow = self._build_workflow()
+        
+    def _build_workflow(self) -> StateGraph:
+        """Build the LangGraph workflow with nodes and edges"""
+        
+        # Create the state graph
+        workflow = StateGraph(AgentState)
+        
+        # Add nodes
+        workflow.add_node("intent_detection", self._intent_detection_node)
+        workflow.add_node("support_agent", self._support_agent_node)
+        workflow.add_node("product_agent", self._product_agent_node)
+        workflow.add_node("fallback_handler", self._fallback_handler_node)
+        workflow.add_node("response_synthesis", self._response_synthesis_node)
+        
+        # Set entry point
+        workflow.set_entry_point("intent_detection")
+        
+        # Define conditional edges based on intent
+        workflow.add_conditional_edges(
+            "intent_detection",
+            self._route_by_intent,
+            {
+                "support_agent": "support_agent",
+                "product_agent": "product_agent", 
+                "fallback_handler": "fallback_handler"
+            }
+        )
+        
+        # Add edges from agents to synthesis
+        workflow.add_edge("support_agent", "response_synthesis")
+        workflow.add_edge("product_agent", "response_synthesis")
+        workflow.add_edge("fallback_handler", "response_synthesis")
+        
+        # Set end point
+        workflow.add_edge("response_synthesis", END)
+        
+        return workflow.compile(checkpointer=self.memory)
+    
+    async def _intent_detection_node(self, state: AgentState) -> AgentState:
+        """Node for detecting user intent"""
+        self.logger.info(f"Detecting intent for message: {state['user_message']}")
+        
+        try:
+            # Extract intent using LLM service
+            intent_info = await self.llm_service.extract_intent(state['user_message'])
+            
+            return {
+                **state,
+                "intent": intent_info.get("intent", "general_question"),
+                "intent_confidence": intent_info.get("confidence", 0.5),
+                "entities": intent_info.get("entities", [])
+            }
+        except Exception as e:
+            self.logger.error(f"Error in intent detection: {str(e)}")
+            return {
+                **state,
+                "intent": "general_question",
+                "intent_confidence": 0.3,
+                "entities": [],
+                "error": f"Intent detection error: {str(e)}"
+            }
+    
+    def _route_by_intent(self, state: AgentState) -> str:
+        """Route to appropriate agent based on intent"""
+        intent = state.get("intent", "general_question")
+        confidence = state.get("intent_confidence", 0.0)
+        
+        # If confidence is low, route to fallback
+        if confidence is not None and confidence < 0.4:
+            return "fallback_handler"
+        
+        # Route based on intent
+        if intent == "support":
+            return "support_agent"
+        elif intent == "product_info":
+            return "product_agent"
+        else:
+            return "fallback_handler"
+    
+    async def _support_agent_node(self, state: AgentState) -> AgentState:
+        """Node for processing support agent queries with retry logic"""
+        self.logger.info("Processing with Support Agent...")
+        
+        response = await self._call_agent_with_retry(
+            self.support_agent.process_query,
+            state['user_message'],
+            max_retries=1
+        )
+        
+        return {
+            **state,
+            "agent_responses": [response],
+            "current_agent": "Support Agent"
+        }
+    
+    async def _product_agent_node(self, state: AgentState) -> AgentState:
+        """Node for processing product agent queries with retry logic"""
+        self.logger.info("Processing with Product Agent...")
+        
+        response = await self._call_agent_with_retry(
+            self.product_agent.process_query,
+            state['user_message'],
+            max_retries=1
+        )
+        
+        return {
+            **state,
+            "agent_responses": [response],
+            "current_agent": "Product Agent"
+        }
+    
+    async def _fallback_handler_node(self, state: AgentState) -> AgentState:
+        """Node for handling general queries and fallbacks"""
+        self.logger.info("Processing with Fallback Handler...")
+        
+        try:
+            # Generate a general response
+            prompt = f"""User message: {state['user_message']}
+
+This is a general inquiry that doesn't fall into specific support or product categories. Please provide a helpful, friendly response that:
+1. Acknowledges the user's question
+2. Provides any general guidance you can
+3. Suggests how they might get more specific help
+4. Maintains a professional, helpful tone"""
+            
+            result = await self.llm_service.generate_text(prompt, max_tokens=300)
+            
+            response = AgentResponse(
+                agent_name="General Assistant",
+                response=result.get("text", "I'm here to help! How can I assist you today?"),
+                handled=True,
+                processing_time=0.1,
+                sources=[]
+            )
+            
+            return {
+                **state,
+                "agent_responses": [response],
+                "current_agent": "General Assistant"
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error in fallback handler: {str(e)}")
+            error_response = AgentResponse(
+                agent_name="Error Handler",
+                response=f"I encountered an error while processing your request: {str(e)}",
+                handled=False,
+                processing_time=0.0,
+                sources=[],
+                error=str(e)
+            )
+            
+            return {
+                **state,
+                "agent_responses": [error_response],
+                "current_agent": "Error Handler",
+                "error": str(e)
+            }
+    
+    async def _response_synthesis_node(self, state: AgentState) -> AgentState:
+        """Node for synthesizing final response from agent responses"""
+        self.logger.info("Synthesizing final response...")
+        
+        agent_responses = state.get("agent_responses", [])
+        
+        if not agent_responses:
+            final_response = "I'm sorry, I couldn't process your request. Please try again."
+        elif len(agent_responses) == 1:
+            final_response = agent_responses[0].response
+        else:
+            # Multiple agent responses - synthesize them
+            final_response = await self._synthesize_multiple_responses(
+                state['user_message'], 
+                agent_responses
+            )
+        
+        # Add assistant message to state
+        assistant_message = {
+            "role": "assistant",
+            "content": final_response,
+            "timestamp": time.time(),
+            "agent_responses": [
+                {
+                    "agent_name": resp.agent_name,
+                    "response": resp.response,
+                    "processing_time": resp.processing_time,
+                    "sources": resp.sources,
+                    "handled": resp.handled
+                }
+                for resp in agent_responses
+            ]
+        }
+        
+        return {
+            **state,
+            "messages": [assistant_message]
+        }
+    
+    async def _call_agent_with_retry(self, agent_func, query: str, max_retries: int = 1) -> AgentResponse:
+        """Call agent function with retry logic"""
+        last_error = None
+        
+        for attempt in range(max_retries + 1):
+            try:
+                self.logger.info(f"Calling agent (attempt {attempt + 1}/{max_retries + 1})")
+                
+                # Call the agent function
+                result = await agent_func(query)
+                
+                # Convert to AgentResponse
+                return AgentResponse(
+                    agent_name=result.get("agent_name", "Unknown Agent"),
+                    response=result.get("response", ""),
+                    handled=result.get("handled", False),
+                    processing_time=result.get("processing_time", 0.0),
+                    sources=result.get("sources", [])
+                )
+                
+            except Exception as e:
+                last_error = e
+                self.logger.warning(f"Agent call failed (attempt {attempt + 1}): {str(e)}")
+                
+                if attempt < max_retries:
+                    # Wait before retry (exponential backoff)
+                    await asyncio.sleep(2 ** attempt)
+                else:
+                    self.logger.error(f"All retry attempts failed for agent call")
+        
+        # All retries failed
+        return AgentResponse(
+            agent_name="Error Handler",
+            response=f"Sorry, I encountered an error while processing your request: {str(last_error)}",
+            handled=False,
+            processing_time=0.0,
+            sources=[],
+            error=str(last_error)
+        )
+    
+    async def _synthesize_multiple_responses(self, user_message: str, agent_responses: List[AgentResponse]) -> str:
+        """Synthesize a coherent response from multiple agent responses"""
+        
+        context = f"User asked: {user_message}\n\n"
+        context += "Here are responses from different agents:\n\n"
+        
+        for i, response in enumerate(agent_responses, 1):
+            context += f"{i}. {response.agent_name}:\n"
+            context += f"   {response.response}\n"
+            if response.sources:
+                context += f"   Sources: {', '.join(response.sources)}\n"
+            context += "\n"
+        
+        # Highlight Product Agent's response if present
+        product_response = next((r for r in agent_responses if r.agent_name == 'Product Agent'), None)
+        prompt = f"""You are an expert AI assistant. Based on the following agent responses, provide a coherent, comprehensive answer to the user's question.
+
+{context}
+
+Instructions:
+1. If the Product Agent provides a direct answer or product list, always prioritize and clearly present this information in your summary.
+2. Use Knowledge Agent and Support Agent responses to add context or fill gaps, but do not contradict the Product Agent.
+3. Address the user's original question directly.
+4. Combine the most relevant information from each agent.
+5. Avoid redundancy.
+6. Provide a clear, actionable response.
+7. Mention relevant sources when appropriate."""
+        
+        synthesis_result = await self.llm_service.generate_text(prompt, max_tokens=600)
+        return synthesis_result.get("text", agent_responses[0].response)
+    
     async def process_message(self, message: str, user_id: str = "anonymous", session_id: str = "default") -> Dict[str, Any]:
-        """Process user message through appropriate agents"""
+        """Process user message through the LangGraph workflow"""
         
         self.logger.info(f"Processing message: '{message}' | user_id={user_id} | session_id={session_id}")
         
@@ -36,78 +342,68 @@ class AgentOrchestrator:
             "timestamp": time.time()
         })
         
-        # Extract intent to determine which agents to use
-        intent_info = await self.llm_service.extract_intent(message)
-        intent = intent_info.get("intent", "general_question")
-        self.logger.info(f"Extracted intent: {intent_info}")
-        
-        # Process message through relevant agents
-        agent_responses = []
+        # Prepare initial state for LangGraph
+        initial_state = AgentState(
+            messages=[],
+            user_message=message,
+            user_id=user_id,
+            session_id=session_id,
+            intent=None,
+            intent_confidence=None,
+            entities=[],
+            agent_responses=[],
+            current_agent=None,
+            error=None,
+            retry_count=0,
+            processing_start_time=time.time()
+        )
         
         try:
-            # Always try support agent for support-related queries
-            support_keywords = ["support", "help", "issue", "problem", "bug", "password", "reset", "login", "account"]
-            if intent == "support" or any(word in message.lower() for word in support_keywords):
-                # route to Support Agent
-                self.logger.info("Routing to Support Agent...")
-                support_response = await self.support_agent.process_query(message)
-                self.logger.info(f"Support Agent response: {support_response}")
-                if support_response.get("handled"):
-                    agent_responses.append({
-                        "agent_name": support_response["agent_name"],
-                        "response": support_response["response"],
-                        "processing_time": support_response["processing_time"],
-                        "sources": support_response.get("sources", [])
-                    })
+            # Execute the LangGraph workflow
+            config = {"configurable": {"thread_id": session_id}}
+            final_state = await self.workflow.ainvoke(initial_state, config)
             
-            # Try product agent for product-related queries
-            product_keywords = ["product", "price", "buy", "feature"]
-            if intent == "product_info" or any(word in message.lower() for word in product_keywords):
-                self.logger.info("Routing to Product Agent...")
-                product_response = await self.product_agent.process_query(message)
-                self.logger.info(f"Product Agent response: {product_response}")
-                if product_response.get("handled"):
-                    agent_responses.append({
-                        "agent_name": product_response["agent_name"],
-                        "response": product_response["response"],
-                        "processing_time": product_response["processing_time"],
-                        "sources": product_response.get("sources", [])
-                    })
-            
-            # If no agents handled the query, provide a general response
-            if not agent_responses:
-                self.logger.info("No agent handled the query, generating general response...")
-                general_response = await self._generate_general_response(message)
-                agent_responses.append({
-                    "agent_name": "General Assistant",
-                    "response": general_response["text"],
-                    "processing_time": 0.1,
-                    "sources": []
-                })
-            
-            # Synthesize final response
-            self.logger.info(f"Collected agent responses: {agent_responses}")
-            final_response = await self._synthesize_response(message, agent_responses)
-            self.logger.info(f"Final synthesized response: {final_response}")
+            # Extract results
+            final_response = final_state.get("messages", [{}])[0].get("content", "No response generated")
+            agent_responses = final_state.get("agent_responses", [])
             
             # Add assistant response to session
             self.sessions[session_id]["messages"].append({
                 "role": "assistant",
                 "content": final_response,
                 "timestamp": time.time(),
-                "agent_responses": agent_responses
+                "agent_responses": [
+                    {
+                        "agent_name": resp.agent_name,
+                        "response": resp.response,
+                        "processing_time": resp.processing_time,
+                        "sources": resp.sources,
+                        "handled": resp.handled
+                    }
+                    for resp in agent_responses
+                ]
             })
             
             return {
                 "response": final_response,
-                "agent_responses": agent_responses,
-                "intent": intent,
-                "session_id": session_id
+                "agent_responses": [
+                    {
+                        "agent_name": resp.agent_name,
+                        "response": resp.response,
+                        "processing_time": resp.processing_time,
+                        "sources": resp.sources
+                    }
+                    for resp in agent_responses
+                ],
+                "intent": final_state.get("intent", "general_question"),
+                "session_id": session_id,
+                "processing_time": time.time() - final_state.get("processing_start_time", time.time())
             }
             
         except Exception as e:
-            self.logger.error(f"Error in process_message: {str(e)}", exc_info=True)
+            self.logger.error(f"Error in LangGraph workflow: {str(e)}", exc_info=True)
             error_response = f"I encountered an error while processing your request: {str(e)}"
+            
             return {
                 "response": error_response,
                 "agent_responses": [{
@@ -117,47 +413,9 @@ class AgentOrchestrator:
                     "sources": []
                 }],
                 "intent": "error",
-                "session_id": session_id
+                "session_id": session_id,
+                "processing_time": time.time() - initial_state.get("processing_start_time", time.time())
             }
-    
-    async def _synthesize_response(self, user_message: str, agent_responses: List[Dict[str, Any]]) -> str:
-        """Synthesize a coherent response from multiple agent responses"""
-        
-        self.logger.info("Synthesizing final response from agent responses...")
-        
-        if len(agent_responses) == 1:
-            return agent_responses[0]["response"]
-        
-        # Multiple agent responses - synthesize them
-        context = f"User asked: {user_message}\n\n"
-        context += "Here are responses from different agents:\n\n"
-        
-        for i, response in enumerate(agent_responses, 1):
-            context += f"{i}. {response['agent_name']}:\n"
-            context += f"   {response['response']}\n"
-            if response.get('sources'):
-                context += f"   Sources: {', '.join(response['sources'])}\n"
-            context += "\n"
-        
-        # Highlight Product Agent's response if present
-        product_response = next((r for r in agent_responses if r['agent_name'] == 'Product Agent'), None)
-        prompt = f"""You are an expert AI assistant. Based on the following agent responses, provide a coherent, comprehensive answer to the user's question.\n\n{context}\n\nInstructions:\n1. If the Product Agent provides a direct answer or product list, always prioritize and clearly present this information in your summary.\n2. Use Knowledge Agent and Support Agent responses to add context or fill gaps, but do not contradict the Product Agent.\n3. Address the user's original question directly.\n4. Combine the most relevant information from each agent.\n5. Avoid redundancy.\n6. Provide a clear, actionable response.\n7. Mention relevant sources when appropriate.\n"""
-        self.logger.info(f"LLM synthesis prompt: {prompt}")
-        synthesis_result = await self.llm_service.generate_text(prompt, max_tokens=600)
-        self.logger.info(f"LLM synthesis result: {synthesis_result}")
-        return synthesis_result.get("text", agent_responses[0]["response"])
-    
-    async def _generate_general_response(self, message: str) -> Dict[str, Any]:
-        """Generate a general response when no specific agent handles the query"""
-        prompt = f"""User message: {message}
-
-This is a general inquiry that doesn't fall into specific support or product categories. Please provide a helpful, friendly response that:
-1. Acknowledges the user's question
-2. Provides any general guidance you can
-3. Suggests how they might get more specific help
-4. Maintains a professional, helpful tone"""
-        
-        return await self.llm_service.generate_text(prompt, max_tokens=300)
     
     def get_session_history(self, session_id: str) -> List[Dict[str, Any]]:
         """Get conversation history for a session"""

@@ -11,7 +11,7 @@ from services.llm_service import LLMService
 from services.vector_service import VectorService
 from agents.support_agent import SupportAppAgent
 from agents.product_agent import ProductAppAgent
-from agents.orchestrator import AgentOrchestrator
+from agents.orchestrator import LangGraphOrchestrator
 from services.vector_data_loader import initialize_vector_data
 
 # Global services
@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     product_agent = ProductAppAgent(llm_service)
     
     # Initialize orchestrator
-    orchestrator = AgentOrchestrator(
+    orchestrator = LangGraphOrchestrator(
         support_agent=support_agent,
         product_agent=product_agent,
         llm_service=llm_service
@@ -106,8 +106,8 @@ async def chat(message: ChatMessage):
         # Process message through orchestrator
         result = await orchestrator.process_message(
             message.message,
-            user_id=message.user_id,
-            session_id=message.session_id
+            user_id=message.user_id or "anonymous",
+            session_id=message.session_id or "default"
         )
         
         total_time = time.time() - start_time
@@ -116,7 +116,7 @@ async def chat(message: ChatMessage):
             response=result["response"],
             agent_responses=result["agent_responses"],
             total_processing_time=total_time,
-            session_id=message.session_id
+            session_id=message.session_id or "default"
         )
         
     except Exception as e:
