@@ -1,4 +1,4 @@
-.PHONY: help build-local up-local up-prod down logs clean install-deps
+.PHONY: help build-local up-local up-prod down logs clean install-deps langflow-up langflow-up-apis langflow-up-full langflow-down langflow-logs langflow-clean langflow-health
 
 # Default target
 help:
@@ -13,6 +13,15 @@ help:
 	@echo "  make logs-service   - Show logs from specific service (usage: make logs-service SERVICE=mcp-server)"
 	@echo "  make clean          - Remove all containers, images, and volumes"
 	@echo "  make health-check   - Check health of all services"
+	@echo ""
+	@echo "Langflow Commands (Integrated):"
+	@echo "  make langflow-up     - Start all services including Langflow"
+	@echo "  make langflow-up-apis - Start all services with Langflow"
+	@echo "  make langflow-up-full - Start full stack with Langflow"
+	@echo "  make langflow-down   - Stop all services including Langflow"
+	@echo "  make langflow-logs   - Show all service logs"
+	@echo "  make langflow-clean  - Clean up all containers and volumes"
+	@echo "  make langflow-health - Check health of all services"
 	@echo ""
 
 # Install dependencies
@@ -45,10 +54,11 @@ up-local:
 	@echo ""
 	@echo "Services are starting up..."
 	@echo "Frontend: http://localhost:3000"
-	@echo "MCP Server: http://localhost:8000"
-	@echo "Support API: http://localhost:8001"
+	@echo "MCP Server: http://localhost:8001"
+	@echo "Support API: http://localhost:8003"
 	@echo "Product API: http://localhost:8002"
 	@echo "ChromaDB: http://localhost:8000"
+	@echo "Langflow UI: http://localhost:7860"
 	@echo ""
 	@echo "Run 'make logs' to see startup logs"
 	@echo "Run 'make health-check' to verify services are ready"
@@ -149,4 +159,76 @@ setup-ollama:
 	@echo "2. Pull the required model:"
 	@echo "   ollama pull gemma:2b"
 	@echo "3. Start Ollama service"
-	@echo "4. Verify it's running: curl http://localhost:11434/api/tags" 
+	@echo "4. Verify it's running: curl http://localhost:11434/api/tags"
+
+# Langflow commands (integrated with main services)
+langflow-up:
+	@echo "Starting Langflow with integrated services..."
+	$(MAKE) up-local
+	@echo ""
+	@echo "Langflow is starting up with all services..."
+	@echo "Langflow UI: http://localhost:7860"
+	@echo "Username: admin"
+	@echo "Password: admin123"
+	@echo "Frontend: http://localhost:3000"
+	@echo "MCP Server: http://localhost:8001"
+	@echo "Support API: http://localhost:8003"
+	@echo "Product API: http://localhost:8002"
+	@echo "ChromaDB: http://localhost:8000"
+	@echo ""
+	@echo "Run 'make logs' to see startup logs"
+
+langflow-up-apis:
+	@echo "Starting Langflow with APIs for testing..."
+	$(MAKE) up-local
+	@echo ""
+	@echo "Langflow is starting up with APIs..."
+	@echo "Langflow UI: http://localhost:7860"
+	@echo "Support API: http://localhost:8003"
+	@echo "Product API: http://localhost:8002"
+	@echo ""
+	@echo "Run 'make logs' to see startup logs"
+
+langflow-up-full:
+	@echo "Starting Langflow with full stack..."
+	$(MAKE) up-local
+	@echo ""
+	@echo "Langflow is starting up with full stack..."
+	@echo "Langflow UI: http://localhost:7860"
+	@echo "Support API: http://localhost:8003"
+	@echo "Product API: http://localhost:8002"
+	@echo "ChromaDB: http://localhost:8000"
+	@echo ""
+	@echo "Run 'make logs' to see startup logs"
+
+langflow-down:
+	@echo "Stopping all services including Langflow..."
+	$(MAKE) down
+	@echo "All services stopped!"
+
+langflow-logs:
+	@echo "Showing all service logs including Langflow (press Ctrl+C to exit)..."
+	$(MAKE) logs
+
+langflow-clean:
+	@echo "Cleaning up all containers and volumes including Langflow..."
+	$(MAKE) clean
+	@echo "All cleanup completed!"
+
+langflow-health:
+	@echo "Checking health of all services including Langflow..."
+	@echo ""
+	@echo "Langflow:"
+	@curl -s http://localhost:7860/health 2>/dev/null && echo "Langflow: Healthy" || echo "Langflow: Not responding"
+	@echo ""
+	@echo "Support API:"
+	@curl -s http://localhost:8003/health 2>/dev/null && echo "Support API: Healthy" || echo "Support API: Not responding"
+	@echo ""
+	@echo "Product API:"
+	@curl -s http://localhost:8002/health 2>/dev/null && echo "Product API: Healthy" || echo "Product API: Not responding"
+	@echo ""
+	@echo "MCP Server:"
+	@curl -s http://localhost:8001/health 2>/dev/null && echo "MCP Server: Healthy" || echo "MCP Server: Not responding"
+	@echo ""
+	@echo "ChromaDB:"
+	@curl -s http://localhost:8000/api/v1/heartbeat 2>/dev/null && echo "ChromaDB: Healthy" || echo "ChromaDB: Not responding" 

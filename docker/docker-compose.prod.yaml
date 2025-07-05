@@ -117,10 +117,39 @@ services:
     networks:
       - agentic-network
 
+  # Langflow UI for Visual Flow Orchestration (Production)
+  langflow:
+    image: langflowai/langflow:latest
+    container_name: langflow
+    ports:
+      - "7860:7860"
+    volumes:
+      - ../langflow/flows:/app/flows
+      - langflow_data:/app/langflow.db
+    depends_on:
+      - chromadb
+      - support-app-api
+      - product-app-api
+    networks:
+      - agentic-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+
 networks:
   agentic-network:
     driver: bridge
 
 volumes:
   ollama_data:
-  chromadb_data: 
+  chromadb_data:
+  langflow_data: 

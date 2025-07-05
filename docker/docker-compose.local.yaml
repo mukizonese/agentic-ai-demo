@@ -39,8 +39,6 @@ services:
       timeout: 10s
       retries: 3
 
-
-
   # Product App API
   product-app-api:
     build:
@@ -98,9 +96,33 @@ services:
       - ../frontend:/app
       - /app/node_modules
 
+  # Langflow UI for Visual Flow Orchestration
+  langflow:
+    image: langflowai/langflow:latest
+    container_name: langflow
+    ports:
+      - "7860:7860"
+    volumes:
+      - ../langflow/flows:/app/data/flows
+      - langflow_data:/app
+    depends_on:
+      - chromadb
+      - support-app-api
+      - product-app-api
+    networks:
+      - agentic-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
 networks:
   agentic-network:
     driver: bridge
 
 volumes:
-  chromadb_data: 
+  chromadb_data:
+  langflow_data: 
